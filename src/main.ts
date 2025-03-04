@@ -1,31 +1,50 @@
 import { readFileSync } from "fs";
 import * as ts from "typescript";
-import * as ai from "./ai"
-import * as numbered from "./numbered"
-import { Path } from "./app";
+import * as ai from './ai'
+
+import { Options, Path } from "./app";
+import { tupleApplySnd } from "./lib";
 export type StringContext = {
 	sugestion?: string,
 	text: string,
-	suroundingCode: string
+	suroundingCode: CodeReference,
+	moveConfidence?: number
 }
+export type SourceCode = {
+	name: string,
+	lines: string[]
+}
+export type CodeReference = {
+	file: SourceCode,
+	line: number,
+	character: number,
+	length: number
+}
+export const getCodeLines = (codeRef: CodeReference, linesEachSide: number): string[] =>
+	codeRef.file.lines.slice(
+		Math.max(0, codeRef.line - linesEachSide),
+		Math.min(codeRef.file.lines.length, codeRef.line + linesEachSide));
+
 export type NamedString = StringContext & { name: string };
 //const makeTransformer = (): ts.TransformerFactory<ts.Node> => {
-const collector = (sourceFile): Map<ts.Node, StringContext> => {
+const collector = (sourceFile: ts.SourceFile): Map<ts.Node, StringContext> => {
 	let strings = new Map<ts.Node, StringContext>();
-	const sourceLines = sourceFile.getText().split("\n");
-	const getNodeContext = (node: ts.Node, lines: number): string => {
-		const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-		return sourceLines.slice(Math.max(0, line - lines), Math.min(sourceLines.length, line + lines)).join("\n");
+	const sourceCode: SourceCode = { name: sourceFile.fileName, lines: sourceFile.getText().split("\n") };
+	const getNodeCodeReference = (node: ts.Node): CodeReference => {
+		const { line, character }  = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+		const length = node.getEnd() - node.getStart()
+		return { line, character, length, file: sourceCode }
 	}
 	const visit = (node: ts.Node) => {
 		if (node.kind == ts.SyntaxKind.StringLiteral) {
 			const strNode = node as ts.StringLiteral;
 			strings.set(node, {
 				text: strNode.text,
-				suroundingCode: getNodeContext(strNode, 5)
+				suroundingCode: getNodeCodeReference(strNode)
 			});
+		} else if(node.kind != ts.SyntaxKind.ImportDeclaration) {
+			ts.forEachChild(node, visit);
 		}
-		ts.forEachChild(node, visit);
 	};
 	visit(sourceFile);
 	return strings;
@@ -66,15 +85,14 @@ const makeImportTransformer = (): ts.TransformerFactory<ts.SourceFile> =>
 const makeStringTransformer = (strings: Map<ts.Node, NamedString>, resourceNode: ts.Expression): ts.TransformerFactory<ts.SourceFile> =>
 	(context: ts.TransformationContext) => {
 		const visit = (node: ts.Node): ts.Node => {
-			if (node.kind == ts.SyntaxKind.StringLiteral && strings.has(node)) {
+			const name = strings.get(node)?.name
+			if (node.kind == ts.SyntaxKind.StringLiteral && name !== undefined) {
 				return ts.factory.createPropertyAccessExpression(
 					resourceNode,
-					strings.get(node).name
+					name
 				);
-			} else if(node.kind != ts.SyntaxKind.ImportDeclaration) {
-				return ts.visitEachChild(node, visit, context);
 			} else {
-				return node;
+				return ts.visitEachChild(node, visit, context);
 			}
 		}
 		return (sourceFile): ts.SourceFile => ts.visitNode(sourceFile, visit, ts.isSourceFile);
@@ -82,18 +100,22 @@ const makeStringTransformer = (strings: Map<ts.Node, NamedString>, resourceNode:
 type ResourceFileOptions = {
 	oraniseBy: 'flat' | 'file'
 }
-type Options = {
 
-}
 export const processFile = async (file: Path, options: Options): Promise<{ newSource: string, resourceData: any }> => {
 	const sourceFile = ts.createSourceFile(
 		file,
 		readFileSync(file).toString(),
-		ts.ScriptTarget.ES2015,
-		/*setParentNodes */ true
+		ts.ScriptTarget.Latest,
+		true
 	);
-	const strings = collector(sourceFile);
-	const namedStrings = await numbered.getNames(strings)
+	const strings = [...collector(sourceFile).entries()]
+		.map(([k, v]) => [k, Promise.resolve(v)] as [ts.Node, Promise<StringContext>]);
+	const sugestedStrings = options.suggester !== undefined
+		? await options.suggester(strings, options)
+		: strings;
+	const namedStringPromises = await options.namer(sugestedStrings, options);
+	const a = await Promise.all(namedStringPromises.map(async ([k, v]) => [k, await v] as [ts.Node, NamedString]));
+	const namedStrings = new Map(a);
 	const stringTransformer = makeStringTransformer(
 		namedStrings,
 		ts.factory.createIdentifier("resource")
@@ -103,6 +125,6 @@ export const processFile = async (file: Path, options: Options): Promise<{ newSo
 	const transformedSourceFile = result.transformed[0];
 	const resourceData = Object.fromEntries(Array.from(namedStrings.values()).map(({name, text}) => [name, text]));
 	const printer = ts.createPrinter();
-	const newSource = printer.printNode(ts.EmitHint.SourceFile, transformedSourceFile, sourceFile);
+	const newSource = printer.printNode(ts.EmitHint.SourceFile, transformedSourceFile, transformedSourceFile);
 	return { newSource, resourceData };
 };

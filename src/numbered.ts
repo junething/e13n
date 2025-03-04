@@ -1,20 +1,24 @@
+import { Namer } from './app';
 import { NamedString, StringContext } from './main'
-import { Namer } from './namer';
 
-export const getNames: Namer = async <K,>(strs: Map<K, StringContext>): Promise<Map<K, NamedString>> => {
+export const getNames: Namer = async <K,>(strs: [K, Promise<StringContext>][]): Promise<[K, Promise<NamedString>][]> => {
+
 	let count = 0;
 	const name = (cntx: StringContext) => `var${count++}`;
 
 	// Convert the map to an array of entries
-  	const entries = Array.from(strs.entries());
 
   	// Process all entries in parallel
-  	const transformedEntries =
-    	entries.map(([key, value]) => [key, {
-			name: name(value),
-			...value
-			}] as [K, NamedString]);
-
+	  let transformedEntries = [];
+	  for (let [key, value] of strs) {
+		  transformedEntries.push([
+			  key,
+			  Promise.resolve({
+				  name: await name(await value),
+				  ...value
+			  })
+		  ] as [K, Promise<NamedString>]);
+	  }
   	// Create a new map from the transformed entries
-  	return new Map(transformedEntries);
+  	return Promise.resolve(transformedEntries);
 };
