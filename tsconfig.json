@@ -6,8 +6,16 @@
     "target": "es6",
     "sourceMap": true,
     "outDir": "dist",
-    "types": ["node"],
-    "esModuleInterop" :true
+    "types": [
+      "node"
+    ],
+    "esModuleInterop": true
   },
-  "lib": ["es2023"]
+  "lib": [
+    "es2024"
+  ],
+  "exclude": [
+    "dist",
+    "test_files"
+  ]
 }

@@ -1,24 +1,17 @@
-import { Namer } from './app';
-import { NamedString, StringContext } from './main'
+import { Namer, Options, StringContext } from './app';
+import { NamedString } from "./app";
 
-export const getNames: Namer = async <K,>(strs: [K, Promise<StringContext>][]): Promise<[K, Promise<NamedString>][]> => {
 
-	let count = 0;
-	const name = (cntx: StringContext) => `var${count++}`;
+export const namer: Namer = {
+  name: 'numbered',
+  preflight: async () => ({ good: true }),
+  namer: factory
+}
 
-	// Convert the map to an array of entries
-
-  	// Process all entries in parallel
-	  let transformedEntries = [];
-	  for (let [key, value] of strs) {
-		  transformedEntries.push([
-			  key,
-			  Promise.resolve({
-				  name: await name(await value),
-				  ...value
-			  })
-		  ] as [K, Promise<NamedString>]);
-	  }
-  	// Create a new map from the transformed entries
-  	return Promise.resolve(transformedEntries);
+async function* factory<K,>(strings: AsyncGenerator<[K, StringContext]>, _options: Options): AsyncGenerator<[K, NamedString]> {
+  let count = 0;
+  const name = (_: StringContext) => `var${count++}`;
+  for await (let [key, value] of strings) {
+    yield [key, { name: name(value), ...value }];
+  }
 };

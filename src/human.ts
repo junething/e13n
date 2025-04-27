@@ -1,68 +1,100 @@
-import { Namer, Options } from './app';
-import { getCodeLines, NamedString, StringContext } from './main'
+import { Namer, Options, Preflight, PreflightResult, Skip, StringContext } from './app';
+import { getCodeLines } from './main'
+import { NamedString } from "./app";
 import color from 'colorts';
-import { echo } from 'colorts';
-import { input } from '@inquirer/prompts';
+import { input, rawlist, select } from '@inquirer/prompts';
 import { highlight } from 'cli-highlight'
+import { escapeRegExp, escapeRegExpReplacement } from './lib';
+import * as tty from 'tty';
 
 const prompt = "String name: "
-
-export const highlightContext = (cntx: StringContext, options: Options) => {
-	const code = getCodeLines(cntx.suroundingCode, options.linesOfContext).join('\n');
-	// TODO this should be more robust in case of multiple cases of the same string
-	const codeInvertString = code.replace(
-		new RegExp(`"${cntx.text}"|'${cntx.text}'`),
-		(str) => color(str).bold.underline.toString()
-	);
-	const codeHighlighted = highlight(codeInvertString, { language: 'typescript', ignoreIllegals: true });
-	let lineNumber = cntx.suroundingCode.line - options.linesOfContext - 1;
-	const maxNumWidth = (lineNumber + 1 + options.linesOfContext * 2).toString().length;
-	const codeNumbed = codeHighlighted.split('\n').map(l => {
-		const num = lineNumber.toString().padStart(maxNumWidth);
-		lineNumber += 1;
-		const pre = color(`${num}  │`)[
-			lineNumber == cntx.suroundingCode.line
-			? 'bold'
-			: 'dim'].toString();
-		return ` ${pre} ${l}`
-	});
-	const fileLine = color(`  ${'🗎'.padStart(maxNumWidth)}  │ ${cntx.suroundingCode.file.name}`).dim.underline.toString();
-	return `${fileLine}\n${codeNumbed.join('\n')}`;
+const STRING_PLACEHOLD = '__STRING__PLACEHOLD__';
+const STRING_PLACEHOLD_ESCAPED = escapeRegExpReplacement(STRING_PLACEHOLD)
+export const namer: Namer = {
+  name: 'human',
+  preflight: async () => preflight(),
+  namer: generator
 }
 
-export const getNames: Namer = async <K,>(strs: [K, Promise<StringContext>][], options: Options): Promise<[K, Promise<NamedString>][]> => {
-	const name = async (cntx: StringContext): Promise<string> => {
-		console.log(highlightContext(cntx, options));
-		const answer = await input({
-			message: prompt,
-			default: cntx.sugestion
-		});
-		console.log(answer);
-		return answer ?? cntx.sugestion;
-	};
+async function* generator<K,>(strings: AsyncGenerator<[K, StringContext]>, options: Options): AsyncGenerator<[K, NamedString]> {
+  const name = async (cntx: StringContext): Promise<string | typeof Skip> => {
+    console.log(highlightContext(cntx, options));
+    if (cntx.moveConfidence !== undefined && cntx.sugestion !== undefined) {
+      const suggestSkip = (cntx.moveConfidence ?? 100) < options.threshold;
+      const trimedText = cntx.text.slice(0, 70);
+      const message = `"${trimedText}${trimedText.length < cntx.text.length ? '...' : ''}"`;
+      const confidenceMsg = color(`${suggestSkip ? 100 - cntx.moveConfidence : cntx.moveConfidence}% confidence`).dim.toString();
+      const action: 'accept' | 'skip' | 'change' | 'set' = cntx.sugestion ? await select({
+        message,
+        choices: suggestSkip ? [
+          { name: `skip ${confidenceMsg}`, value: 'skip' },
+          { name: cntx.sugestion, value: 'accept' },
+          { name: 'change', value: 'change' },
+        ] : [
+          { name: `${cntx.sugestion} ${confidenceMsg}`, value: 'accept' },
+          { name: 'skip', value: 'skip' },
+          { name: 'change', value: 'change' },
+        ],
+      }) : 'set';
+      switch (action) {
+        case 'accept': return cntx.sugestion as string;
+        case 'change': return await input({
+          message: prompt,
+        }) ?? name(cntx);
+        case 'set': return await input({
+          message: prompt,
+          default: cntx.sugestion ?? undefined
+        }) ?? cntx.sugestion;
+        case 'skip': return Skip;
+      };
+    } else {
+      const answer: string | typeof Skip = (await input({
+        message: prompt,
+        default: 'skip\u200B' // TODO remove HACK
+      }));
+      return (answer !== 'skip\u200B') ? answer : Skip;
+    }
+  };
 
-	let transformedEntries = [];
-	for (let [key, value] of strs) {
-		const val = await value;
-		transformedEntries.push([
-			key,
-			Promise.resolve({
-				name: await name(val),
-				...val
-			})
-		] as [K, Promise<NamedString>]);
-	}
-
-	return transformedEntries;
+  for await (let [key, value] of strings) {
+    yield [key, { name: await name(value), ...value }];
+  }
 };
-class Deferred<T> {
-	promise: Promise<T>;
-	resolve!: (value: T) => void;
-	reject!: (reason?: any) => void;
-	constructor() {
-		this.promise = new Promise<T>((resolve, reject) => {
-			this.reject = reject;
-			this.resolve = resolve;
-		});
-	}
+const preflight = (): PreflightResult =>
+  tty.isatty(process.stdout.fd) ? {
+    good: true
+  } : {
+    good: false,
+    errors: ["NOT A TTY: Interative terminal required for human naming."]
+  }
+/**
+ * Generate pretty printed context from StringContext using terminal colorts
+ */
+const highlightContext = (cntx: StringContext, options: Options) => {
+  const code = getCodeLines(cntx.suroundingCode, options.linesOfContext).join('\n');
+  // TODO this should be more robust in case of multiple cases of the same string
+  const textEscaped = escapeRegExp(cntx.text);
+  const codeStringRemoved = code.replace(
+    new RegExp(`(?<=")${textEscaped}(?=")|(?<=')${textEscaped}(?=')|(?<=\>|})${textEscaped}(?=<|{)`),
+    STRING_PLACEHOLD_ESCAPED
+  );
+
+  const codeHighlighted = highlight(codeStringRemoved, { language: 'jsx', ignoreIllegals: true });
+  let lineNumber = Math.max(cntx.suroundingCode.line - options.linesOfContext - 1, 1);
+  const maxNumWidth = Math.max((lineNumber + 1 + options.linesOfContext * 2).toString().length, 3);
+  const codeNumbered = codeHighlighted.split('\n').map(l => {
+    const num = lineNumber.toString().padStart(maxNumWidth);
+    lineNumber += 1;
+    const pre = color(num)[
+      lineNumber == cntx.suroundingCode.line
+        ? 'bold'
+        : 'dim'].toString() + color('  │').dim.toString();
+    return ` ${pre} ${l}`
+  }).join('\n');
+  const codeStringInserted = codeNumbered.replace(
+    STRING_PLACEHOLD,
+    color(cntx.text).bold.underline.toString()
+  );
+  const fileLine = color(`  ${'🗎'.padStart(maxNumWidth)}  │ ${cntx.suroundingCode.file.name}`).dim.underline.toString();
+  return `${fileLine}\n${codeStringInserted.toString()}`;
 }
