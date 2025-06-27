@@ -105,6 +105,7 @@ export const processFile = async (file: Path, options: Options): Promise<{ newSo
     true
   );
   const strings = toAsyncGenerator([...collector(sourceFile).entries()]);
+  //console.log(await takeAsync(strings));
   const sugestedStrings = options.suggester?.namer?.(strings, options) ?? strings;
   const namedStrings = new Map(await takeAsync(options.namer.namer(sugestedStrings, options)));
 

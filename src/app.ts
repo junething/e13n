@@ -6,6 +6,7 @@ import * as human from "./human"
 import { parseIntStrict, Percentage, throwErr } from './lib';
 import highlight from 'cli-highlight';
 import * as fs from 'fs';
+import color from 'colorts';
 
 /* DEFAULTS */
 const DEFAULT_LLM_THRESHOLD: Percentage = 60;
@@ -15,10 +16,10 @@ const DEFAULT_NAMER: keyof typeof namers = "human";
 
 export type Namer = {
   name: string,
-  namer: NamerFactory,
+  namer: NameGenerator,
   preflight: Preflight
 }
-export type NamerFactory = <K, >(strings: AsyncGenerator<[K, StringContext]>, options: Options) => AsyncGenerator<[K, NamedString]>
+export type NameGenerator = <K, >(strings: AsyncGenerator<[K, StringContext]>, options: Options) => AsyncGenerator<[K, NamedString]>
 
 export type Preflight = () => Promise<PreflightResult>;
 export type PreflightResult = {
@@ -94,28 +95,12 @@ const app = command({
   },
   handler: async ({ files, namer: maybeNamer, suggester, linesOfContext, threshold, reentries }) => {
     let namer = maybeNamer as Namer; // cmd-ts should know this?
-    console.error('Running preflights')
-    let preflights = (await Promise.all(([namer, suggester].filter(x => x) as Namer[]).map(async (n) => {
-      let result = await n.preflight();
-      return { namer: n, result };
-    })));
-    preflights.map(p => {
-      console.error(`${p.namer.name}: ${p.result.good ? "Good" : ""}`);
-      p.result.warnings?.map(console.error);
-      if (!p.result.good) {
-        p.result.errors?.map(console.error);
-      }
-    })
-
-    if (preflights.some(result => !result.result.good)) {
-      console.error(`Preflight failed`);
-      process.exit(1);
-    }
-    console.error(`Passed`);
-
-    files.map(async file => {
+    // run preflight tests and exit on fail, prints results
+    await runPreflights(suggester != undefined ? [namer, suggester] : [namer]);
+    for (let file of files) {
       namer = namer;
       const resourcePath: string[] = [file.split('.')[0]];
+      console.log(`File: ${color(file).yellow}, Type: ${color(getFiletypeName(file)).yellow}`);
       const { newSource, resourceData } = await processFile(file, {
         namer,
         suggester,
@@ -126,10 +111,44 @@ const app = command({
       });
       console.log(highlight(newSource, { language: 'typescript' }));
       console.log(highlight(JSON.stringify(resourceData, null, 4), { language: 'json' }));
-    })
+    }
   },
 });
-
+const runPreflights = async (namers: Namer[]) => {
+  if (namers.length == 0) {
+    return;
+  }
+  console.error('Running preflights')
+  // Run all preflights in parallel, some may involve api requests 
+  let preflights = await Promise.all(namers.map(async (namer) => (
+    {
+      namer,
+      result: await namer.preflight()
+    })));
+  // Print results to stderr sequentially
+  preflights.map(p => {
+    console.error(`${p.namer.name}: ${p.result.good
+      ? color("Pass").green.toString()
+      : color("Fail").red.toString()}`);
+    p.result.warnings?.map(w => console.error(`    \uFE0F⚠ ${color(w).yellow.dim.toString()}`));
+    if (!p.result.good) {
+      p.result.errors?.map(e => console.error(`    ❌ ${color(e).red.toString()}`));
+    }
+  });
+  if (preflights.some(result => !result.result.good)) {
+    console.error(color(`Preflight failed`).red.toString());
+    process.exit(1);
+  }
+  console.error(color(`Preflight passed`).green.toString());
+}
+// Proper names of supported filetypes
+const fileTypenames: Record<string, string> = {
+  'js': 'Javascript',
+  'ts': 'Typescript',
+  'jsx': 'JSX',
+  'tsx': 'TSX',
+}
+const getFiletypeName = (file: string) => fileTypenames[file.split('.').at(-1) ?? 0] ?? "Unknown";
 /**
   * Catch exit signal (likely from ctrl-c) and exit nicely
   */

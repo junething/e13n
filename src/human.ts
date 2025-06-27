@@ -37,27 +37,34 @@ async function* generator<K,>(strings: AsyncGenerator<[K, StringContext]>, optio
         ],
       }) : 'set';
       switch (action) {
-        case 'accept': return cntx.sugestion as string;
-        case 'change': return await input({
-          message: prompt,
-        }) ?? name(cntx);
-        case 'set': return await input({
-          message: prompt,
-          default: cntx.sugestion ?? undefined
-        }) ?? cntx.sugestion;
-        case 'skip': return Skip;
+        case 'accept':
+          return cntx.sugestion as string;
+        case 'change':
+          return await input({
+            message: prompt,
+          }) ?? name(cntx);
+        case 'set':
+          return await input({
+            message: prompt,
+            default: cntx.sugestion ?? undefined
+          }) ?? cntx.sugestion;
+        case 'skip':
+          return Skip;
+        default:
+          return Skip;
       };
     } else {
       const answer: string | typeof Skip = (await input({
         message: prompt,
-        default: 'skip\u200B' // TODO remove HACK
+        default: 'skip\u200B' // TODO: remove HACK
       }));
       return (answer !== 'skip\u200B') ? answer : Skip;
     }
   };
 
   for await (let [key, value] of strings) {
-    yield [key, { name: await name(value), ...value }];
+    let strName = await name(value);
+    yield [key, { ...value, sugestion: undefined, name: strName }];
   }
 };
 const preflight = (): PreflightResult =>
@@ -72,7 +79,7 @@ const preflight = (): PreflightResult =>
  */
 const highlightContext = (cntx: StringContext, options: Options) => {
   const code = getCodeLines(cntx.suroundingCode, options.linesOfContext).join('\n');
-  // TODO this should be more robust in case of multiple cases of the same string
+  // TODO this should be more robust in case of multiple instances of the same string
   const textEscaped = escapeRegExp(cntx.text);
   const codeStringRemoved = code.replace(
     new RegExp(`(?<=")${textEscaped}(?=")|(?<=')${textEscaped}(?=')|(?<=\>|})${textEscaped}(?=<|{)`),
@@ -93,7 +100,7 @@ const highlightContext = (cntx: StringContext, options: Options) => {
   }).join('\n');
   const codeStringInserted = codeNumbered.replace(
     STRING_PLACEHOLD,
-    color(cntx.text).bold.underline.toString()
+    color(cntx.text).bold.inverse.toString()
   );
   const fileLine = color(`  ${'🗎'.padStart(maxNumWidth)}  │ ${cntx.suroundingCode.file.name}`).dim.underline.toString();
   return `${fileLine}\n${codeStringInserted.toString()}`;
