@@ -1,5 +1,5 @@
 > [!Warning]
-> This tool is underdevelopment and not ready for production use
+> This tool is under development and not ready for production use
 
 # E13N Tool
 This tool automates the externalisation (e13n) of strings from your codebase into various translation file formats to prepare for localisation.
@@ -16,7 +16,7 @@ Currently the available namers are
 - Numbered
 - Prompt
 - LLM (currently a mistral agent)
-These can be composed together to, for example, have the LLM give suggestions that are approved with a prompt, **or something**
+These can be composed together to, for example, have the LLM give suggestions that are approved manually.
 ## Installation
 WIP
 ## How to use
