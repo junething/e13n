@@ -67,7 +67,7 @@ File: src/app.ts, Type: Typescript
   change
 ```
 
-## Funcationality
+## Functionality
 - [ ] Code handling
 	- [x] Parse JS/TS/JSX
 		- [x] Extract strings
