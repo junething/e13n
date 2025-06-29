@@ -1,4 +1,5 @@
-import { number, restPositionals, Type, command, run, option } from 'cmd-ts';
+#!/usr/bin/env node
+import { number, restPositionals, Type, command, run, option, positional } from 'cmd-ts';
 import { processFile } from './main';
 import * as ai from "./ai"
 import * as numbered from "./numbered"
@@ -84,16 +85,18 @@ export const namers = {
   ['human']: human.namer,
 }
 const app = command({
-  name: "JSTool",
+  name: "e13n",
   args: {
-    files: restPositionals({ type: CheckedFile, displayName: 'file' }),
+    firstFile: positional({ type: CheckedFile, displayName: 'file' }),
+    restFiles: restPositionals({ type: CheckedFile, displayName: 'file' }),
     linesOfContext: option({ type: number, short: 'l', long: 'lines-of-cntx', defaultValue: () => DEFAULT_LINES_CNTX }),
     threshold: option({ type: PercentageArg, short: 't', long: 'threshold', defaultValue: () => DEFAULT_LLM_THRESHOLD }),
     reentries: option({ type: number, long: 'reentries', defaultValue: () => DEFAULT_ALLOWED_REENTRIES }),
     namer: option({ type: NamerArg, short: 'n', long: 'namer', defaultValue: () => namers[DEFAULT_NAMER] }),
     suggester: option({ type: NamerArg, short: 's', long: 'suggester', defaultValue: () => undefined }),
   },
-  handler: async ({ files, namer: maybeNamer, suggester, linesOfContext, threshold, reentries }) => {
+  handler: async ({ firstFile, restFiles, namer: maybeNamer, suggester, linesOfContext, threshold, reentries }) => {
+    let files = [firstFile].concat(restFiles);
     let namer = maybeNamer as Namer; // cmd-ts should know this?
     // run preflight tests and exit on fail, prints results
     await runPreflights(suggester != undefined ? [namer, suggester] : [namer]);
@@ -142,13 +145,13 @@ const runPreflights = async (namers: Namer[]) => {
   console.error(color(`Preflight passed`).green.toString());
 }
 // Proper names of supported filetypes
-const fileTypenames: Record<string, string> = {
+const fileTypeNames: Record<string, string> = {
   'js': 'Javascript',
   'ts': 'Typescript',
   'jsx': 'JSX',
   'tsx': 'TSX',
 }
-const getFiletypeName = (file: string) => fileTypenames[file.split('.').at(-1) ?? 0] ?? "Unknown";
+const getFiletypeName = (file: string) => fileTypeNames[file.split('.').at(-1) ?? 0] ?? "Unknown";
 /**
   * Catch exit signal (likely from ctrl-c) and exit nicely
   */

@@ -1,16 +1,18 @@
 {
-  "name": "jstool",
-  "version": "1.0.0",
+  "name": "e13ntool",
+  "version": "0.1.0",
   "description": "",
   "main": "dist/app.js",
   "type": "commonjs",
+  "bin": "dist/src/app.js",
   "scripts": {
     "start": "tsc && node dist/app.js",
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "TBD",
   "devDependencies": {
     "@types/node": "^22.13.5",
     "@types/prompt-sync": "^4.2.3",

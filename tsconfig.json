@@ -9,12 +9,15 @@
     "types": [
       "node"
     ],
-    "esModuleInterop": true
+    "esModuleInterop": true,
+   //"allowImportingTsExtensions": true,
+    //"noEmit": true
   },
   "lib": [
     "es2024"
   ],
   "exclude": [
+    "node_modules",
     "dist",
     "test_files"
   ]
